@@ -1,0 +1,17 @@
+run:
+  skip-dirs-use-default: false
+
+linters:
+  enable:
+    - gofmt
+    - gocyclo
+    - misspell
+    - bodyclose
+  disable:
+    - govet
+
+gocyclo:
+  min-complexity: 15
+
+issues:
+  exclude-use-default: false
