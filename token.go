@@ -195,6 +195,12 @@ func tokenize(ctx context, v reflect.Value) []*Token {
 		return tokenizeString(v)
 
 	case reflect.Chan:
+		if v.IsNil() {
+			return []*Token{{ParenOpen, "("},
+				typeName(v.Type().String()), {ParenClose, ")"},
+				{ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+		}
+
 		if v.Cap() == 0 {
 			return []*Token{{Func, "make"}, {ParenOpen, "("},
 				{Chan, "chan"}, typeName(v.Type().Elem().String()), {ParenClose, ")"},
@@ -206,6 +212,12 @@ func tokenize(ctx context, v reflect.Value) []*Token {
 			{Comment, wrapComment(formatUintptr(v.Pointer()))}}
 
 	case reflect.Func:
+		if v.IsNil() {
+			return []*Token{{ParenOpen, "("},
+				typeName(v.Type().String()), {ParenClose, ")"},
+				{ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+		}
+
 		return []*Token{{ParenOpen, "("}, {TypeName, v.Type().String()},
 			{ParenClose, ")"}, {ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"},
 			{Comment, wrapComment(formatUintptr(v.Pointer()))}}
@@ -251,6 +263,10 @@ func tokenizeCollection(ctx context, v reflect.Value) []*Token {
 
 	switch v.Kind() {
 	case reflect.Slice, reflect.Array:
+		if v.Kind() == reflect.Slice && v.IsNil() {
+			return []*Token{typeName(v.Type().String()), {ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+		}
+
 		if data, ok := v.Interface().([]byte); ok {
 			ts = append(ts, tokenizeBytes(data)...)
 			break
@@ -270,6 +286,10 @@ func tokenizeCollection(ctx context, v reflect.Value) []*Token {
 		ts = append(ts, &Token{SliceClose, "}"})
 
 	case reflect.Map:
+		if v.IsNil() {
+			return []*Token{typeName(v.Type().String()), {ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+		}
+
 		ts = append(ts, typeName(v.Type().String()))
 		keys := v.MapKeys()
 		sort.Slice(keys, func(i, j int) bool {

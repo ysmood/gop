@@ -24,7 +24,7 @@ func eq(t *testing.T, a, b interface{}) {
 	if a == b {
 		return
 	}
-	t.Log("should equal")
+	t.Log(a, "[should equal]", b)
 	t.Fail()
 }
 
@@ -375,4 +375,12 @@ func TestStripANSI(t *testing.T) {
 
 func TestTheme(t *testing.T) {
 	eq(t, gop.ThemeDefault(gop.Error)[0], gop.Underline)
+}
+
+func TestNil(t *testing.T) {
+	eq(t, gop.Plain(map[string]string(nil)), "map[string]string(nil)")
+	eq(t, gop.Plain(chan int(nil)), "(chan int)(nil)")
+	eq(t, gop.Plain([]string(nil)), "[]string(nil)")
+	eq(t, gop.Plain((func())(nil)), "(func())(nil)")
+	eq(t, gop.Plain((*struct{})(nil)), "(*struct {})(nil)")
 }
