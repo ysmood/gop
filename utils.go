@@ -45,10 +45,3 @@ func formatUintptr(p uintptr) string {
 func wrapComment(s string) string {
 	return "/* " + s + " */"
 }
-
-func formatLenCap(l, c int) string {
-	if c >= 0 {
-		return fmt.Sprintf("/* len=%d cap=%d */", l, c)
-	}
-	return fmt.Sprintf("/* len=%d */", l)
-}

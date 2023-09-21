@@ -12,12 +12,6 @@ import (
 	"unicode/utf8"
 )
 
-// LongStringLen is the length of that will be treated as long string
-var LongStringLen = 16
-
-// LongBytesLen is the length of that will be treated as long bytes
-var LongBytesLen = 16
-
 // Type of token
 type Type int
 
@@ -273,9 +267,6 @@ func tokenizeCollection(ctx context, v reflect.Value) []*Token {
 		} else {
 			ts = append(ts, typeName(v.Type().String()))
 		}
-		if v.Kind() == reflect.Slice && v.Cap() > 0 {
-			ts = append(ts, &Token{Comment, formatLenCap(v.Len(), v.Cap())})
-		}
 		ts = append(ts, &Token{SliceOpen, "{"})
 		for i := 0; i < v.Len(); i++ {
 			el := v.Index(i)
@@ -295,9 +286,6 @@ func tokenizeCollection(ctx context, v reflect.Value) []*Token {
 		sort.Slice(keys, func(i, j int) bool {
 			return compare(keys[i].Interface(), keys[j].Interface()) < 0
 		})
-		if len(keys) > 1 {
-			ts = append(ts, &Token{Comment, formatLenCap(len(keys), -1)})
-		}
 		ts = append(ts, &Token{MapOpen, "{"})
 		for _, k := range keys {
 			ctx := ctx.add(k.Interface())
@@ -436,9 +424,6 @@ func tokenizeDuration(d time.Duration) []*Token {
 func tokenizeString(v reflect.Value) []*Token {
 	s := v.String()
 	ts := []*Token{{String, s}}
-	if v.Len() >= LongStringLen {
-		ts = append(ts, &Token{Comment, formatLenCap(len(s), -1)})
-	}
 	return ts
 }
 
@@ -454,9 +439,6 @@ func tokenizeBytes(data []byte) []*Token {
 		ts = append(ts, &Token{Func, SymbolBase64}, &Token{ParenOpen, "("})
 		ts = append(ts, &Token{String, base64.StdEncoding.EncodeToString(data)})
 		ts = append(ts, &Token{ParenClose, ")"})
-	}
-	if len(data) >= LongBytesLen {
-		ts = append(ts, &Token{Comment, formatLenCap(len(data), -1)})
 	}
 	return ts
 }

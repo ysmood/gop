@@ -28,14 +28,6 @@ func eq(t *testing.T, a, b interface{}) {
 	t.Fail()
 }
 
-func neq(t *testing.T, a, b interface{}) {
-	if a != b {
-		return
-	}
-	t.Log("should not equal")
-	t.Fail()
-}
-
 // RandStr generates a random string with the specified length
 func randStr(l int) string {
 	b := make([]byte, (l+1)/2)
@@ -154,6 +146,8 @@ func TestTokenize(t *testing.T) {
 
 		if out != expected {
 			t.Log("check failed")
+			writeFile(t, "tmp/expected.txt", expected)
+			writeFile(t, "tmp/out.txt", out)
 			t.Fail()
 		}
 	}
@@ -171,10 +165,7 @@ func TestTokenize(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = os.WriteFile(f, []byte(code), 0644)
-		if err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, f, code)
 		b, err = exec.Command("go", "run", f).CombinedOutput()
 		if err != nil {
 			t.Fatal(string(b))
@@ -192,10 +183,10 @@ func TestRef(t *testing.T) {
 	a[1] = a[0]
 
 	eq(t, gop.Plain(a), `[2][]int{
-    []int/* len=1 cap=1 */{
+    []int{
         1,
     },
-    []int/* len=1 cap=1 */{
+    []int{
         1,
     },
 }`)
@@ -231,7 +222,7 @@ func TestCircularRef(t *testing.T) {
 func TestCircularNilRef(t *testing.T) {
 	arr := []A{{}, {}}
 
-	eq(t, gop.StripANSI(gop.F(arr)), `[]gop_test.A/* len=2 cap=2 */{
+	eq(t, gop.StripANSI(gop.F(arr)), `[]gop_test.A{
     gop_test.A{
         Int: 0,
         B: (*gop_test.B)(nil),
@@ -261,13 +252,13 @@ func TestCircularSlice(t *testing.T) {
 
 	ts := gop.Tokenize(a)
 
-	eq(t, gop.Format(ts, gop.ThemeNone), `[][]interface {}/* len=2 cap=2 */{
-    []interface {}/* len=1 cap=1 */{
-        []interface {}/* len=1 cap=1 */{
+	eq(t, gop.Format(ts, gop.ThemeNone), `[][]interface {}{
+    []interface {}{
+        []interface {}{
             gop.Circular(0, 0).([]interface {}),
         },
     },
-    []interface {}/* len=1 cap=1 */{
+    []interface {}{
         gop.Circular(1).([]interface {}),
     },
 }`)
@@ -350,13 +341,6 @@ func TestTypeName(t *testing.T) {
 	eq(t, gop.Plain(b('a')), "gop_test.b(97)")
 }
 
-func TestSliceCapNotEqual(t *testing.T) {
-	x := gop.Plain(make([]int, 3, 10))
-	y := gop.Plain(make([]int, 3))
-
-	neq(t, x, y)
-}
-
 func TestFixNestedStyle(t *testing.T) {
 	s := gop.S(" 0 "+gop.S(" 1 "+
 		gop.S(" 2 "+
@@ -383,4 +367,11 @@ func TestNil(t *testing.T) {
 	eq(t, gop.Plain([]string(nil)), "[]string(nil)")
 	eq(t, gop.Plain((func())(nil)), "(func())(nil)")
 	eq(t, gop.Plain((*struct{})(nil)), "(*struct {})(nil)")
+}
+
+func writeFile(t *testing.T, f, code string) {
+	err := os.WriteFile(f, []byte(code), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

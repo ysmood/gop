@@ -1,7 +1,7 @@
-[]interface {}/* len=38 cap=38 */{
+[]interface {}{
     nil,
     []int{},
-    []interface {}/* len=4 cap=4 */{
+    []interface {}{
         true,
         false,
         uintptr(23),
@@ -23,7 +23,7 @@
     make(chan string, 3)/* {{.ch2}} */,
     make(chan struct {})/* {{.ch3}} */,
     (func(string) int)(nil)/* {{.fn}} */,
-    map[interface {}]interface {}/* len=3 */{
+    map[interface {}]interface {}{
         `"test"`: 10,
         "a": 1,
         (interface {})(nil)/* {{.ref}} */: 1,
@@ -39,11 +39,11 @@
     gop.Base64("YWHi"),
     []byte(`bytes
 	bytes`),
-    []byte(`long long long long string`)/* len=26 */,
+    []byte("long long long long string"),
     byte('a'),
     byte(0x1),
     '天',
-    `long long long long string`/* len=26 */,
+    "long long long long string",
     `
 test`,
     "" +
@@ -54,11 +54,11 @@ test`,
     &struct { Int int }{
         Int: 0,
     },
-    &map[int]int/* len=2 */{
+    &map[int]int{
         1: 2,
         3: 4,
     },
-    &[]int/* len=2 cap=2 */{
+    &[]int{
         1,
         2,
     },
@@ -67,7 +67,7 @@ test`,
         2,
     },
     gop.Ptr([]byte("\x01\x02")).(*[]uint8),
-    gop.Time(`2021-08-28T08:36:36.807908+08:00`, 63765707796),
+    gop.Time("2021-08-28T08:36:36.807908+08:00", 63765707796),
     gop.Duration("1h0m0s"),
     gop.JSONStr(map[string]interface {}{
         "a": 1.0,
