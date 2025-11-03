@@ -78,7 +78,7 @@ func Plain(v interface{}) string {
 
 // Format a list of tokens
 func Format(ts []*Token, theme Theme) string {
-	out := ""
+	var out strings.Builder
 	depth := 0
 	for i, t := range ts {
 		if oneOf(t.Type, SliceOpen, MapOpen, StructOpen) {
@@ -92,28 +92,34 @@ func Format(ts []*Token, theme Theme) string {
 
 		switch t.Type {
 		case SliceOpen, MapOpen, StructOpen:
-			out += Stylize(t.Literal, styles) + "\n"
+			out.WriteString(Stylize(t.Literal, styles))
+			out.WriteString("\n")
 		case SliceItem, MapKey, StructKey:
-			out += strings.Repeat(indentUnit, depth)
+			out.WriteString(strings.Repeat(indentUnit, depth))
 		case Colon, InlineComma, Chan:
-			out += Stylize(t.Literal, styles) + " "
+			out.WriteString(Stylize(t.Literal, styles))
+			out.WriteString(" ")
 		case Comma:
-			out += Stylize(t.Literal, styles) + "\n"
+			out.WriteString(Stylize(t.Literal, styles))
+			out.WriteString("\n")
 		case SliceClose, MapClose, StructClose:
-			if strings.HasSuffix(out, "{\n") {
-				out = out[:len(out)-1]
-				out += Stylize(t.Literal, styles)
+			s := out.String()
+			if strings.HasSuffix(s, "{\n") {
+				out.Reset()
+				out.WriteString(s[:len(s)-1])
+				out.WriteString(Stylize(t.Literal, styles))
 			} else {
-				out += strings.Repeat(indentUnit, depth) + Stylize(t.Literal, styles)
+				out.WriteString(strings.Repeat(indentUnit, depth))
+				out.WriteString(Stylize(t.Literal, styles))
 			}
 		case String:
-			out += Stylize(readableStr(depth, t.Literal), styles)
+			out.WriteString(Stylize(readableStr(depth, t.Literal), styles))
 		default:
-			out += Stylize(t.Literal, styles)
+			out.WriteString(Stylize(t.Literal, styles))
 		}
 	}
 
-	return out
+	return out.String()
 }
 
 func oneOf(t Type, list ...Type) bool {
@@ -127,7 +133,7 @@ func oneOf(t Type, list ...Type) bool {
 
 // To make multi-line string block more human readable.
 // Split newline into two strings, convert "\t" into tab.
-// Such as foramt string: "line one \n\t line two" into:
+// Such as format string: "line one \n\t line two" into:
 //
 //	"line one \n" +
 //	"	 line two"
@@ -152,36 +158,38 @@ func replaceEscaped(s string, escaped rune, new string) (string, bool) {
 	type State int
 	const (
 		init State = iota
-		prematch
+		preMatch
 		match
 	)
 
 	state := init
-	out := ""
-	buf := ""
+	var out strings.Builder
+	var buf strings.Builder
 	has := false
 
 	onInit := func(r rune) {
 		state = init
-		out += buf + string(r)
-		buf = ""
+		out.WriteString(buf.String())
+		out.WriteRune(r)
+		buf.Reset()
 	}
 
-	onPrematch := func() {
-		state = prematch
-		buf = "\\"
+	onPreMatch := func() {
+		state = preMatch
+		buf.Reset()
+		buf.WriteString("\\")
 	}
 
 	onEscape := func() {
 		state = match
-		out += new
-		buf = ""
+		out.WriteString(new)
+		buf.Reset()
 		has = true
 	}
 
 	for _, r := range s {
 		switch state {
-		case prematch:
+		case preMatch:
 			switch r {
 			case escaped:
 				onEscape()
@@ -192,7 +200,7 @@ func replaceEscaped(s string, escaped rune, new string) (string, bool) {
 		case match:
 			switch r {
 			case '\\':
-				onPrematch()
+				onPreMatch()
 			default:
 				onInit(r)
 			}
@@ -200,12 +208,12 @@ func replaceEscaped(s string, escaped rune, new string) (string, bool) {
 		default:
 			switch r {
 			case '\\':
-				onPrematch()
+				onPreMatch()
 			default:
 				onInit(r)
 			}
 		}
 	}
 
-	return out, has
+	return out.String(), has
 }
