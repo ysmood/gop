@@ -401,6 +401,109 @@ func TestJSONArrayBug(t *testing.T) {
 	}
 }
 
+func TestMaxDepth(t *testing.T) {
+	// Create a deeply nested structure
+	type Node struct {
+		Value int
+		Next  *Node
+	}
+
+	// Create a chain of 20 nodes
+	var root *Node
+	current := &Node{Value: 0}
+	root = current
+	for i := 1; i < 20; i++ {
+		current.Next = &Node{Value: i}
+		current = current.Next
+	}
+
+	// Test with default MaxDepth (15)
+	result := gop.Plain(root)
+	if !strings.Contains(result, "gop.GopError(") {
+		t.Errorf("Expected max depth error with default MaxDepth, got: %s", result)
+	}
+	if !strings.Contains(result, "max depth exceeded") {
+		t.Errorf("Expected 'max depth exceeded' message, got: %s", result)
+	}
+
+	// Test with custom MaxDepth of 5
+	tokens := gop.TokenizeWithOptions(root, gop.Options{MaxDepth: 5})
+	result = gop.Format(tokens, gop.ThemeNone)
+	if !strings.Contains(result, "gop.GopError(") {
+		t.Errorf("Expected max depth error with MaxDepth=5, got: %s", result)
+	}
+	if !strings.Contains(result, "max depth exceeded") {
+		t.Errorf("Expected 'max depth exceeded' message with MaxDepth=5, got: %s", result)
+	}
+
+	// Test with MaxDepth of 0 (no limit)
+	tokens = gop.TokenizeWithOptions(root, gop.Options{MaxDepth: 0})
+	result = gop.Format(tokens, gop.ThemeNone)
+	if strings.Contains(result, "max depth exceeded") {
+		t.Errorf("Should not have max depth error with MaxDepth=0, got: %s", result)
+	}
+
+	// Verify all 20 values are present when no limit
+	for i := 0; i < 20; i++ {
+		if !strings.Contains(result, fmt.Sprintf("Value: %d", i)) {
+			t.Errorf("Missing Value: %d in unlimited depth output", i)
+		}
+	}
+
+	// Test with deeply nested maps
+	deepMap := map[string]interface{}{
+		"level1": map[string]interface{}{
+			"level2": map[string]interface{}{
+				"level3": map[string]interface{}{
+					"level4": map[string]interface{}{
+						"level5": map[string]interface{}{
+							"level6": "deep value",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test with MaxDepth of 3
+	tokens = gop.TokenizeWithOptions(deepMap, gop.Options{MaxDepth: 3})
+	result = gop.Format(tokens, gop.ThemeNone)
+	if !strings.Contains(result, "gop.GopError(") {
+		t.Errorf("Expected max depth error with nested maps at MaxDepth=3, got: %s", result)
+	}
+
+	// Test with MaxDepth of 10 (should be enough for this structure)
+	tokens = gop.TokenizeWithOptions(deepMap, gop.Options{MaxDepth: 10})
+	result = gop.Format(tokens, gop.ThemeNone)
+	if strings.Contains(result, "max depth exceeded") {
+		t.Errorf("Should not have max depth error with MaxDepth=10 for this structure, got: %s", result)
+	}
+	if !strings.Contains(result, "deep value") {
+		t.Errorf("Should contain 'deep value' with sufficient MaxDepth, got: %s", result)
+	}
+
+	// Test with deeply nested slices
+	var deepSlice interface{} = []interface{}{
+		[]interface{}{
+			[]interface{}{
+				[]interface{}{
+					[]interface{}{
+						[]interface{}{
+							"deeply nested",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tokens = gop.TokenizeWithOptions(deepSlice, gop.Options{MaxDepth: 4})
+	result = gop.Format(tokens, gop.ThemeNone)
+	if !strings.Contains(result, "gop.GopError(") {
+		t.Errorf("Expected max depth error with nested slices at MaxDepth=4, got: %s", result)
+	}
+}
+
 func writeFile(t *testing.T, f, code string) {
 	err := os.WriteFile(f, []byte(code), 0644)
 	if err != nil {

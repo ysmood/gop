@@ -91,22 +91,37 @@ type Token struct {
 	Literal string
 }
 
-// Tokenize a random Go value
+var DefaultOptions = Options{
+	MaxDepth: 15,
+}
+
+// Tokenize a random Go value with [DefaultOptions].
 func Tokenize(v interface{}) []*Token {
-	return tokenize(reflect.ValueOf(v))
+	return TokenizeWithOptions(v, DefaultOptions)
+}
+
+type Options struct {
+	// MaxDepth limits the depth of tokenization for nested structures
+	// If less than 1 there is no limit.
+	MaxDepth int
+}
+
+func TokenizeWithOptions(v interface{}, opts Options) []*Token {
+	tz := tokenizer{Options: opts, global: map[uintptr]path{}, path: path{}}
+	return tz.tokenize(reflect.ValueOf(v))
 }
 
 func tokenize(v reflect.Value) []*Token {
-	ctx := context{global: map[uintptr]path{}, path: path{}}
-	return ctx.tokenize(v)
+	tz := tokenizer{global: map[uintptr]path{}, path: path{}}
+	return tz.tokenize(v)
 }
 
 type path []interface{}
 
-func (p path) tokens() []*Token {
+func (p path) tokens(opts Options) []*Token {
 	ts := []*Token{}
 	for i, seg := range p {
-		ts = append(ts, Tokenize(seg)...)
+		ts = append(ts, TokenizeWithOptions(seg, opts)...)
 		if i < len(p)-1 {
 			ts = append(ts, &Token{InlineComma, ","})
 		}
@@ -114,24 +129,26 @@ func (p path) tokens() []*Token {
 	return ts
 }
 
-type context struct {
+type tokenizer struct {
+	Options
+
 	global map[uintptr]path
 	path   path
 }
 
-func (ctx *context) push(p interface{}) {
+func (tz *tokenizer) push(p interface{}) {
 	if v := reflect.ValueOf(p); v.Kind() == reflect.Ptr {
 		p = v.Pointer()
 	}
 
-	ctx.path = append(ctx.path, p)
+	tz.path = append(tz.path, p)
 }
 
-func (ctx *context) pop() {
-	ctx.path = ctx.path[:len(ctx.path)-1]
+func (tz *tokenizer) pop() {
+	tz.path = tz.path[:len(tz.path)-1]
 }
 
-func (ctx *context) circular(v reflect.Value) ([]*Token, func()) {
+func (tz *tokenizer) circular(v reflect.Value) ([]*Token, func()) {
 	cleanup := func() {}
 
 	switch v.Kind() {
@@ -141,29 +158,33 @@ func (ctx *context) circular(v reflect.Value) ([]*Token, func()) {
 			return nil, cleanup
 		}
 
-		if prev, has := ctx.global[ptr]; has {
+		if prev, has := tz.global[ptr]; has {
 			ts := []*Token{{Func, SymbolCircular}, {ParenOpen, "("}}
-			ts = append(ts, prev.tokens()...)
+			ts = append(ts, prev.tokens(tz.Options)...)
 			return append(ts, &Token{ParenClose, ")"}, &Token{Dot, "."},
 				&Token{ParenOpen, "("}, typeName(v.Type().String()), &Token{ParenClose, ")"}), cleanup
 		}
 
-		ctx.global[ptr] = ctx.path
+		tz.global[ptr] = tz.path
 		cleanup = func() {
-			delete(ctx.global, ptr)
+			delete(tz.global, ptr)
 		}
 	}
 
 	return nil, cleanup
 }
 
-func (ctx *context) tokenize(v reflect.Value) []*Token {
-	if ts, has := tokenizeSpecial(v); has {
+func (tz *tokenizer) tokenize(v reflect.Value) []*Token {
+	if tz.MaxDepth > 0 && len(tz.path) >= tz.MaxDepth {
+		return []*Token{{Func, SymbolGopError}, {ParenOpen, "("}, {String, "max depth exceeded"}, {ParenClose, ")"}}
+	}
+
+	if ts, has := tz.tokenizeSpecial(v); has {
 		return ts
 	}
 
 	{
-		ts, cleanup := ctx.circular(v)
+		ts, cleanup := tz.circular(v)
 		defer cleanup()
 
 		if ts != nil {
@@ -175,7 +196,7 @@ func (ctx *context) tokenize(v reflect.Value) []*Token {
 
 	switch v.Kind() {
 	case reflect.Interface:
-		return ctx.tokenize(v.Elem())
+		return tz.tokenize(v.Elem())
 
 	case reflect.Bool:
 		t.Type = Bool
@@ -217,7 +238,7 @@ func (ctx *context) tokenize(v reflect.Value) []*Token {
 			{Comment, wrapComment(formatUintptr(v.Pointer()))}}
 
 	case reflect.Ptr:
-		return ctx.tokenizePtr(v)
+		return tz.tokenizePtr(v)
 
 	case reflect.UnsafePointer:
 		return []*Token{typeName("unsafe.Pointer"), {ParenOpen, "("}, typeName("uintptr"),
@@ -230,13 +251,13 @@ func (ctx *context) tokenize(v reflect.Value) []*Token {
 		return tokenizeNumber(v)
 
 	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
-		return ctx.tokenizeCollection(v)
+		return tz.tokenizeCollection(v)
 	}
 
 	return []*Token{t}
 }
 
-func tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
+func (tz *tokenizer) tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
 	if v.Kind() == reflect.Invalid {
 		return []*Token{{Nil, "nil"}}, true
 	} else if r, ok := v.Interface().(rune); ok && unicode.IsGraphic(r) {
@@ -249,10 +270,10 @@ func tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
 		return tokenizeDuration(d), true
 	}
 
-	return tokenizeJSON(v)
+	return tz.tokenizeJSON(v)
 }
 
-func (ctx *context) tokenizeCollection(v reflect.Value) []*Token {
+func (tz *tokenizer) tokenizeCollection(v reflect.Value) []*Token {
 	ts := []*Token{}
 
 	switch v.Kind() {
@@ -271,9 +292,9 @@ func (ctx *context) tokenizeCollection(v reflect.Value) []*Token {
 		for i := 0; i < v.Len(); i++ {
 			el := v.Index(i)
 			ts = append(ts, &Token{SliceItem, ""})
-			ctx.push(i)
-			ts = append(ts, ctx.tokenize(el)...)
-			ctx.pop()
+			tz.push(i)
+			ts = append(ts, tz.tokenize(el)...)
+			tz.pop()
 			ts = append(ts, &Token{Comma, ","})
 		}
 		ts = append(ts, &Token{SliceClose, "}"})
@@ -299,9 +320,9 @@ func (ctx *context) tokenizeCollection(v reflect.Value) []*Token {
 			}
 
 			ts = append(ts, &Token{Colon, ":"})
-			ctx.push(k.Interface())
-			ts = append(ts, ctx.tokenize(v.MapIndex(k))...)
-			ctx.pop()
+			tz.push(k.Interface())
+			ts = append(ts, tz.tokenize(v.MapIndex(k))...)
+			tz.pop()
 			ts = append(ts, &Token{Comma, ","})
 		}
 		ts = append(ts, &Token{MapClose, "}"})
@@ -321,9 +342,9 @@ func (ctx *context) tokenizeCollection(v reflect.Value) []*Token {
 				f = GetPrivateField(v, i)
 			}
 			ts = append(ts, &Token{Colon, ":"})
-			ctx.push(name)
-			ts = append(ts, ctx.tokenize(f)...)
-			ctx.pop()
+			tz.push(name)
+			ts = append(ts, tz.tokenize(f)...)
+			tz.pop()
 			ts = append(ts, &Token{Comma, ","})
 		}
 		ts = append(ts, &Token{StructClose, "}"})
@@ -458,7 +479,7 @@ func tokenizeMapKey(v reflect.Value) []*Token {
 	return ts
 }
 
-func (ctx *context) tokenizePtr(v reflect.Value) []*Token {
+func (tz *tokenizer) tokenizePtr(v reflect.Value) []*Token {
 	ts := []*Token{}
 
 	if v.Elem().Kind() == reflect.Invalid {
@@ -481,18 +502,18 @@ func (ctx *context) tokenizePtr(v reflect.Value) []*Token {
 
 	if needFn {
 		ts = append(ts, &Token{Func, SymbolPtr}, &Token{ParenOpen, "("})
-		ts = append(ts, ctx.tokenize(v.Elem())...)
+		ts = append(ts, tz.tokenize(v.Elem())...)
 		ts = append(ts, &Token{ParenClose, ")"}, &Token{Dot, "."}, &Token{ParenOpen, "("},
 			typeName(v.Type().String()), &Token{ParenClose, ")"})
 	} else {
 		ts = append(ts, &Token{And, "&"})
-		ts = append(ts, ctx.tokenize(v.Elem())...)
+		ts = append(ts, tz.tokenize(v.Elem())...)
 	}
 
 	return ts
 }
 
-func tokenizeJSON(v reflect.Value) ([]*Token, bool) {
+func (tz *tokenizer) tokenizeJSON(v reflect.Value) ([]*Token, bool) {
 	var jv interface{}
 	ts := []*Token{}
 	s := ""
@@ -517,7 +538,7 @@ func tokenizeJSON(v reflect.Value) ([]*Token, bool) {
 
 	if isObj || isArr {
 		ts = append(ts, &Token{ParenOpen, "("})
-		ts = append(ts, Tokenize(jv)...)
+		ts = append(ts, TokenizeWithOptions(jv, tz.Options)...)
 		ts = append(ts, &Token{InlineComma, ","},
 			&Token{String, s}, &Token{ParenClose, ")"})
 		return ts, true
