@@ -242,7 +242,7 @@ func tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
 	} else if r, ok := v.Interface().(rune); ok && unicode.IsGraphic(r) {
 		return []*Token{{Rune, strconv.QuoteRune(r)}}, true
 	} else if b, ok := v.Interface().(byte); ok {
-		return tokenizeByte(&Token{Nil, ""}, b), true
+		return tokenizeByte(b), true
 	} else if t, ok := v.Interface().(time.Time); ok {
 		return tokenizeTime(t), true
 	} else if d, ok := v.Interface().(time.Duration); ok {
@@ -330,32 +330,32 @@ func tokenizeCollection(ctx context, v reflect.Value) []*Token {
 func tokenizeNumber(v reflect.Value) []*Token {
 	t := &Token{Nil, ""}
 	ts := []*Token{}
-	tname := v.Type().String()
+	tName := v.Type().String()
 
 	switch v.Kind() {
 	case reflect.Int:
 		t.Type = Number
 		t.Literal = strconv.FormatInt(v.Int(), 10)
-		if tname != "int" {
-			ts = append(ts, typeName(tname), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
+		if tName != "int" {
+			ts = append(ts, typeName(tName), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
 		} else {
 			ts = append(ts, t)
 		}
 
 	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		ts = append(ts, typeName(tname), &Token{ParenOpen, "("})
+		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
 		t.Type = Number
 		t.Literal = strconv.FormatInt(v.Int(), 10)
 		ts = append(ts, t, &Token{ParenClose, ")"})
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		ts = append(ts, typeName(tname), &Token{ParenOpen, "("})
+		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
 		t.Type = Number
 		t.Literal = strconv.FormatUint(v.Uint(), 10)
 		ts = append(ts, t, &Token{ParenClose, ")"})
 
 	case reflect.Float32:
-		ts = append(ts, typeName(tname), &Token{ParenOpen, "("})
+		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
 		t.Type = Number
 		t.Literal = strconv.FormatFloat(v.Float(), 'f', -1, 32)
 		ts = append(ts, t, &Token{ParenClose, ")"})
@@ -366,14 +366,14 @@ func tokenizeNumber(v reflect.Value) []*Token {
 		if !strings.Contains(t.Literal, ".") {
 			t.Literal += ".0"
 		}
-		if tname != "float64" {
-			ts = append(ts, typeName(tname), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
+		if tName != "float64" {
+			ts = append(ts, typeName(tName), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
 		} else {
 			ts = append(ts, t)
 		}
 
 	case reflect.Complex64:
-		ts = append(ts, typeName(tname), &Token{ParenOpen, "("})
+		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
 		t.Type = Number
 		t.Literal = strconv.FormatComplex(v.Complex(), 'f', -1, 64)
 		t.Literal = t.Literal[1 : len(t.Literal)-1]
@@ -383,8 +383,8 @@ func tokenizeNumber(v reflect.Value) []*Token {
 		t.Type = Number
 		t.Literal = strconv.FormatComplex(v.Complex(), 'f', -1, 128)
 		t.Literal = t.Literal[1 : len(t.Literal)-1]
-		if tname != "complex128" {
-			ts = append(ts, typeName(tname), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
+		if tName != "complex128" {
+			ts = append(ts, typeName(tName), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
 		} else {
 			ts = append(ts, t)
 		}
@@ -394,7 +394,7 @@ func tokenizeNumber(v reflect.Value) []*Token {
 	return ts
 }
 
-func tokenizeByte(t *Token, b byte) []*Token {
+func tokenizeByte(b byte) []*Token {
 	ts := []*Token{typeName("byte"), {ParenOpen, "("}}
 	r := rune(b)
 	if unicode.IsGraphic(r) {
