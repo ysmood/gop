@@ -508,7 +508,7 @@ func tokenizeJSON(v reflect.Value) ([]*Token, bool) {
 	}
 
 	_, isObj := jv.(map[string]interface{})
-	_, isArr := jv.(map[string]interface{})
+	_, isArr := jv.([]interface{})
 
 	if isObj || isArr {
 		ts = append(ts, &Token{ParenOpen, "("})

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"text/template"
 	"time"
@@ -367,6 +368,35 @@ func TestNil(t *testing.T) {
 	eq(t, gop.Plain([]string(nil)), "[]string(nil)")
 	eq(t, gop.Plain((func())(nil)), "(func())(nil)")
 	eq(t, gop.Plain((*struct{})(nil)), "(*struct {})(nil)")
+}
+
+func TestJSONArrayBug(t *testing.T) {
+	// Test for the bug fix where JSON arrays were incorrectly checked as objects
+	// The bug was: _, isArr := jv.(map[string]interface{}) instead of jv.([]interface{})
+	// This caused JSON arrays to never be recognized, so they weren't properly formatted
+
+	jsonArrayStr := `[1, 2, 3]`
+	result := gop.Plain(jsonArrayStr)
+
+	// With the fix, JSON arrays should be detected and formatted with gop.JSONStr()
+	// The result should contain "gop.JSONStr(" indicating proper JSON array detection
+	if !strings.Contains(result, "gop.JSONStr(") {
+		t.Errorf("JSON array not properly detected as JSON. Got: %s", result)
+	}
+
+	// Test with byte array too
+	jsonArrayBytes := []byte(`[{"key": "value"}, 123]`)
+	result2 := gop.Plain(jsonArrayBytes)
+
+	// With the fix, JSON byte arrays should be detected and formatted with gop.JSONBytes()
+	if !strings.Contains(result2, "gop.JSONBytes(") {
+		t.Errorf("JSON byte array not properly detected as JSON. Got: %s", result2)
+	}
+
+	// Test that the tokenized version contains the actual parsed array structure
+	if !strings.Contains(result, "[]interface {}") {
+		t.Errorf("JSON array structure not properly tokenized. Got: %s", result)
+	}
 }
 
 func writeFile(t *testing.T, f, code string) {
