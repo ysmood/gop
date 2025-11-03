@@ -2,6 +2,7 @@ package gop
 
 import (
 	"encoding/base64"
+	"fmt"
 	"reflect"
 	"time"
 )
@@ -66,4 +67,11 @@ const SymbolJSONBytes = "gop.JSONBytes"
 // JSONBytes returns the raw as []byte
 func JSONBytes(v interface{}, raw string) []byte {
 	return []byte(raw)
+}
+
+const SymbolGopError = "gop.GopError"
+
+// GopError returns an error with the given message, it represents an error occurred during tokenization or formatting.
+func GopError(msg string) error {
+	return fmt.Errorf("%s", msg)
 }
