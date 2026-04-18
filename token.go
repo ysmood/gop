@@ -30,8 +30,8 @@ const (
 	String
 	// Byte type
 	Byte
-	// Rune type
-	Rune
+	// RuneInt32 type
+	RuneInt32
 	// Chan type
 	Chan
 	// Func type
@@ -261,7 +261,7 @@ func (tz *tokenizer) tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
 	if v.Kind() == reflect.Invalid {
 		return []*Token{{Nil, "nil"}}, true
 	} else if r, ok := v.Interface().(rune); ok && unicode.IsGraphic(r) {
-		return []*Token{{Rune, strconv.QuoteRune(r)}}, true
+		return tokenizeRuneInt32(r), true
 	} else if b, ok := v.Interface().(byte); ok {
 		return tokenizeByte(b), true
 	} else if t, ok := v.Interface().(time.Time); ok {
@@ -418,6 +418,17 @@ func tokenizeNumber(v reflect.Value) []*Token {
 	}
 
 	return ts
+}
+
+func tokenizeRuneInt32(r rune) []*Token {
+	return []*Token{
+		typeName("gop.Rune"),
+		{ParenOpen, "("},
+		{Number, strconv.FormatInt(int64(r), 10)},
+		{InlineComma, ","},
+		{RuneInt32, strconv.QuoteRune(r)},
+		{ParenClose, ")"},
+	}
 }
 
 func tokenizeByte(b byte) []*Token {

@@ -26,7 +26,7 @@ var ThemeDefault = func(t Type) []Style {
 		return []Style{Cyan}
 	case Bool, Chan:
 		return []Style{Blue}
-	case Rune, Byte, String:
+	case RuneInt32, Byte, String:
 		return []Style{Yellow}
 	case Number:
 		return []Style{Green}

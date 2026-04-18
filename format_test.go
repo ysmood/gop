@@ -320,6 +320,9 @@ func TestConvertors(t *testing.T) {
 	eq(t, gop.JSONStr(nil, "[1, 2]"), "[1, 2]")
 	eq(t, string(gop.JSONBytes(nil, "[1, 2]")), string([]byte("[1, 2]")))
 
+	eq(t, gop.Rune(100, 'd'), 'd')
+	eq(t, gop.Rune(100, 'd'), int32(100))
+
 	eq(t, gop.GopError("test").Error(), "test")
 }
 

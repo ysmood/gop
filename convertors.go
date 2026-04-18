@@ -35,6 +35,13 @@ func Base64(s string) []byte {
 	return b
 }
 
+// SymbolRune for Rune
+const SymbolRune = "gop.Rune"
+
+func Rune(i int32, r rune) rune {
+	return r
+}
+
 // SymbolTime for Time
 const SymbolTime = "gop.Time"
 
