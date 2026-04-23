@@ -75,34 +75,106 @@ var (
 
 var regNewline = regexp.MustCompile(`\r?\n`)
 
-// S is the shortcut for Stylize
+// Styled wraps an inner Token and applies the given Styles when built.
+// It is the token form of the legacy Stylize helper.
+type Styled struct {
+	Inner  Token
+	Styles []Style
+}
+
+// Type returns the inner token type.
+func (s Styled) Type() Type {
+	if s.Inner == nil {
+		return Nil
+	}
+	return s.Inner.Type()
+}
+
+// Build writes the styled rendering of the inner token to sb.
+func (s Styled) Build(sb *strings.Builder) {
+	if s.Inner == nil {
+		return
+	}
+	if NoStyle || !hasActiveStyle(s.Styles) {
+		s.Inner.Build(sb)
+		return
+	}
+
+	// Fast path: a Lit already holds its string, skip the temp builder.
+	if l, ok := s.Inner.(*Lit); ok {
+		Render(sb, l.L, s.Styles)
+		return
+	}
+
+	var inner strings.Builder
+	s.Inner.Build(&inner)
+	Render(sb, inner.String(), s.Styles)
+}
+
+func hasActiveStyle(styles []Style) bool {
+	for _, s := range styles {
+		if s != None {
+			return true
+		}
+	}
+	return false
+}
+
+// Render writes the stylized form of str to sb.
+// For single-line input it wraps the content without allocating an
+// intermediate string. Multi-line input falls back to per-style
+// line-wrapping to match the legacy Stylize behavior.
+func Render(sb *strings.Builder, str string, styles []Style) {
+	if NoStyle {
+		sb.WriteString(str)
+		return
+	}
+	if !strings.ContainsAny(str, "\r\n") {
+		// Single-line: emit outer-to-inner Set, content, then inner-to-outer Unset.
+		for i := len(styles) - 1; i >= 0; i-- {
+			if styles[i] != None {
+				sb.WriteString(styles[i].Set)
+			}
+		}
+		sb.WriteString(str)
+		for _, s := range styles {
+			if s != None {
+				sb.WriteString(s.Unset)
+			}
+		}
+		return
+	}
+	for _, s := range styles {
+		if s == None {
+			continue
+		}
+		str = stylizeLines(s, str)
+	}
+	sb.WriteString(str)
+}
+
+func stylizeLines(s Style, str string) string {
+	newline := regNewline.FindString(str)
+	lines := regNewline.Split(str, -1)
+	for i, l := range lines {
+		lines[i] = s.Set + l + s.Unset
+	}
+	return strings.Join(lines, newline)
+}
+
+// S is the shortcut for Stylize.
 func S(str string, styles ...Style) string {
 	return Stylize(str, styles)
 }
 
-// Stylize string
+// Stylize wraps str with the given styles.
 func Stylize(str string, styles []Style) string {
-	for _, s := range styles {
-		str = stylize(s, str)
-	}
-	return str
-}
-
-func stylize(s Style, str string) string {
-	if NoStyle || s == None {
+	if NoStyle || !hasActiveStyle(styles) {
 		return str
 	}
-
-	newline := regNewline.FindString(str)
-
-	lines := regNewline.Split(str, -1)
-	out := []string{}
-
-	for _, l := range lines {
-		out = append(out, s.Set+l+s.Unset)
-	}
-
-	return strings.Join(out, newline)
+	var sb strings.Builder
+	Render(&sb, str, styles)
+	return sb.String()
 }
 
 // NoStyle respects https://no-color.org/ and "tput colors"

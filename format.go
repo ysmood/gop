@@ -76,50 +76,115 @@ func Plain(v interface{}) string {
 	return Format(Tokenize(v), ThemeNone)
 }
 
-// Format a list of tokens
-func Format(ts []*Token, theme Theme) string {
+// indentCache holds pre-repeated indent strings to avoid calling
+// strings.Repeat for every indented line.
+var indentCache = func() []string {
+	out := make([]string, 33)
+	for i := range out {
+		out[i] = strings.Repeat(indentUnit, i)
+	}
+	return out
+}()
+
+func writeIndent(sb *strings.Builder, depth int) {
+	if depth < len(indentCache) {
+		sb.WriteString(indentCache[depth])
+		return
+	}
+	for i := 0; i < depth; i++ {
+		sb.WriteString(indentUnit)
+	}
+}
+
+// Format a list of tokens.
+func Format(ts []Token, theme Theme) string {
 	var out strings.Builder
 	depth := 0
 	for i, t := range ts {
-		if oneOf(t.Type, SliceOpen, MapOpen, StructOpen) {
+		tt := t.Type()
+		if oneOf(tt, SliceOpen, MapOpen, StructOpen) {
 			depth++
 		}
-		if i < len(ts)-1 && oneOf(ts[i+1].Type, SliceClose, MapClose, StructClose) {
+		if i < len(ts)-1 && oneOf(ts[i+1].Type(), SliceClose, MapClose, StructClose) {
 			depth--
 		}
 
-		styles := theme(t.Type)
+		styles := theme(tt)
 
-		switch t.Type {
+		switch tt {
 		case SliceOpen, MapOpen, StructOpen:
-			out.WriteString(Stylize(t.Literal, styles))
-			out.WriteString("\n")
+			buildStyled(&out, t, styles)
+			out.WriteByte('\n')
 		case SliceItem, MapKey, StructKey:
-			out.WriteString(strings.Repeat(indentUnit, depth))
+			writeIndent(&out, depth)
 		case Colon, InlineComma, Chan:
-			out.WriteString(Stylize(t.Literal, styles))
-			out.WriteString(" ")
+			buildStyled(&out, t, styles)
+			out.WriteByte(' ')
 		case Comma:
-			out.WriteString(Stylize(t.Literal, styles))
-			out.WriteString("\n")
+			buildStyled(&out, t, styles)
+			out.WriteByte('\n')
 		case SliceClose, MapClose, StructClose:
 			s := out.String()
 			if strings.HasSuffix(s, "{\n") {
 				out.Reset()
 				out.WriteString(s[:len(s)-1])
-				out.WriteString(Stylize(t.Literal, styles))
+				buildStyled(&out, t, styles)
 			} else {
-				out.WriteString(strings.Repeat(indentUnit, depth))
-				out.WriteString(Stylize(t.Literal, styles))
+				writeIndent(&out, depth)
+				buildStyled(&out, t, styles)
 			}
 		case String:
-			out.WriteString(Stylize(readableStr(depth, t.Literal), styles))
+			writeReadableString(&out, t, depth, styles)
 		default:
-			out.WriteString(Stylize(t.Literal, styles))
+			buildStyled(&out, t, styles)
 		}
 	}
 
 	return out.String()
+}
+
+// buildStyled renders t into sb, applying styles when any are active.
+// Non-Lit tokens always produce single-line output, so we can emit the
+// escape sequences around t.Build directly and skip the temp builder.
+func buildStyled(sb *strings.Builder, t Token, styles []Style) {
+	if NoStyle || !hasActiveStyle(styles) {
+		t.Build(sb)
+		return
+	}
+	if l, ok := t.(*Lit); ok {
+		Render(sb, l.L, styles)
+		return
+	}
+	for i := len(styles) - 1; i >= 0; i-- {
+		if styles[i] != None {
+			sb.WriteString(styles[i].Set)
+		}
+	}
+	t.Build(sb)
+	for _, s := range styles {
+		if s != None {
+			sb.WriteString(s.Unset)
+		}
+	}
+}
+
+// writeReadableString handles the String-type token path: it materializes
+// the raw literal, reshapes it via readableStr, then stylizes the result.
+func writeReadableString(sb *strings.Builder, t Token, depth int, styles []Style) {
+	var raw string
+	if l, ok := t.(*Lit); ok {
+		raw = l.L
+	} else {
+		var inner strings.Builder
+		t.Build(&inner)
+		raw = inner.String()
+	}
+	s := readableStr(depth, raw)
+	if NoStyle || !hasActiveStyle(styles) {
+		sb.WriteString(s)
+		return
+	}
+	Render(sb, s, styles)
 }
 
 func oneOf(t Type, list ...Type) bool {

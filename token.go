@@ -85,45 +85,235 @@ const (
 	StructClose
 )
 
-// Token represents a symbol in value layout
-type Token struct {
-	Type    Type
-	Literal string
+// Token represents a symbol in value layout. Build appends the
+// token's rendered form to sb so the literal can be computed
+// lazily and avoid allocating intermediate strings.
+type Token interface {
+	Type() Type
+	Build(sb *strings.Builder)
 }
 
+// Lit is a token with a fixed literal string.
+type Lit struct {
+	T Type
+	L string
+}
+
+// Type returns the token type.
+func (l *Lit) Type() Type { return l.T }
+
+// Build writes the literal to sb.
+func (l *Lit) Build(sb *strings.Builder) { sb.WriteString(l.L) }
+
+// IntTok lazily renders a signed integer as a Number token.
+type IntTok int64
+
+// Type returns Number.
+func (IntTok) Type() Type { return Number }
+
+// Build appends the decimal representation to sb.
+func (n IntTok) Build(sb *strings.Builder) {
+	var buf [20]byte
+	sb.Write(strconv.AppendInt(buf[:0], int64(n), 10))
+}
+
+// UintTok lazily renders an unsigned integer as a Number token.
+type UintTok uint64
+
+// Type returns Number.
+func (UintTok) Type() Type { return Number }
+
+// Build appends the decimal representation to sb.
+func (n UintTok) Build(sb *strings.Builder) {
+	var buf [20]byte
+	sb.Write(strconv.AppendUint(buf[:0], uint64(n), 10))
+}
+
+// Float64Tok lazily renders a float64 as a Number token, appending ".0" when the value is integral.
+type Float64Tok float64
+
+// Type returns Number.
+func (Float64Tok) Type() Type { return Number }
+
+// Build appends the formatted value to sb.
+func (f Float64Tok) Build(sb *strings.Builder) {
+	var buf [32]byte
+	s := strconv.AppendFloat(buf[:0], float64(f), 'f', -1, 64)
+	sb.Write(s)
+	hasDot := false
+	for _, b := range s {
+		if b == '.' {
+			hasDot = true
+			break
+		}
+	}
+	if !hasDot {
+		sb.WriteString(".0")
+	}
+}
+
+// FloatTok lazily renders a float at the given bit size as a Number token.
+type FloatTok struct {
+	V    float64
+	Bits int
+}
+
+// Type returns Number.
+func (FloatTok) Type() Type { return Number }
+
+// Build appends the formatted value to sb.
+func (f FloatTok) Build(sb *strings.Builder) {
+	var buf [32]byte
+	sb.Write(strconv.AppendFloat(buf[:0], f.V, 'f', -1, f.Bits))
+}
+
+// ComplexTok lazily renders a complex value at the given bit size as a Number token,
+// stripping the parentheses that strconv.FormatComplex adds.
+type ComplexTok struct {
+	V    complex128
+	Bits int
+}
+
+// Type returns Number.
+func (ComplexTok) Type() Type { return Number }
+
+// Build appends the formatted value to sb.
+func (c ComplexTok) Build(sb *strings.Builder) {
+	s := strconv.FormatComplex(c.V, 'f', -1, c.Bits)
+	sb.WriteString(s[1 : len(s)-1])
+}
+
+// PtrTok lazily renders a uintptr as a Number token in 0xHEX form.
+type PtrTok uintptr
+
+// Type returns Number.
+func (PtrTok) Type() Type { return Number }
+
+// Build appends the hex representation to sb.
+func (p PtrTok) Build(sb *strings.Builder) {
+	sb.WriteString("0x")
+	var buf [20]byte
+	sb.Write(strconv.AppendUint(buf[:0], uint64(p), 16))
+}
+
+// CommentPtrTok lazily renders a uintptr as a Comment token in /* 0xHEX */ form.
+type CommentPtrTok uintptr
+
+// Type returns Comment.
+func (CommentPtrTok) Type() Type { return Comment }
+
+// Build appends the wrapped hex representation to sb.
+func (p CommentPtrTok) Build(sb *strings.Builder) {
+	sb.WriteString("/* 0x")
+	var buf [20]byte
+	sb.Write(strconv.AppendUint(buf[:0], uint64(p), 16))
+	sb.WriteString(" */")
+}
+
+// RuneTok lazily renders a rune as a RuneInt32 token (quoted).
+type RuneTok rune
+
+// Type returns RuneInt32.
+func (RuneTok) Type() Type { return RuneInt32 }
+
+// Build appends the quoted rune to sb.
+func (r RuneTok) Build(sb *strings.Builder) {
+	sb.WriteString(strconv.QuoteRune(rune(r)))
+}
+
+// ByteTok lazily renders a byte as a Byte token, quoted when graphic else as 0xHEX.
+type ByteTok byte
+
+// Type returns Byte.
+func (ByteTok) Type() Type { return Byte }
+
+// Build appends the rendered byte to sb.
+func (b ByteTok) Build(sb *strings.Builder) {
+	r := rune(b)
+	if unicode.IsGraphic(r) {
+		sb.WriteString(strconv.QuoteRune(r))
+		return
+	}
+	sb.WriteString("0x")
+	var buf [4]byte
+	sb.Write(strconv.AppendUint(buf[:0], uint64(b), 16))
+}
+
+// Pre-allocated singletons for common fixed-literal tokens. Reusing
+// these avoids per-token heap allocations during tokenization.
+var (
+	tokParenOpen     Token = &Lit{ParenOpen, "("}
+	tokParenClose    Token = &Lit{ParenClose, ")"}
+	tokDot           Token = &Lit{Dot, "."}
+	tokAnd           Token = &Lit{And, "&"}
+	tokSliceOpen     Token = &Lit{SliceOpen, "{"}
+	tokSliceClose    Token = &Lit{SliceClose, "}"}
+	tokSliceItem     Token = &Lit{SliceItem, ""}
+	tokInlineComma   Token = &Lit{InlineComma, ","}
+	tokComma         Token = &Lit{Comma, ","}
+	tokMapOpen       Token = &Lit{MapOpen, "{"}
+	tokMapClose      Token = &Lit{MapClose, "}"}
+	tokMapKey        Token = &Lit{MapKey, ""}
+	tokColon         Token = &Lit{Colon, ":"}
+	tokStructOpen    Token = &Lit{StructOpen, "{"}
+	tokStructClose   Token = &Lit{StructClose, "}"}
+	tokChan          Token = &Lit{Chan, "chan"}
+	tokNil           Token = &Lit{Nil, "nil"}
+	tokTrue          Token = &Lit{Bool, "true"}
+	tokFalse         Token = &Lit{Bool, "false"}
+	tokFuncMake      Token = &Lit{Func, "make"}
+	tokFuncCircular  Token = &Lit{Func, SymbolCircular}
+	tokFuncGopError  Token = &Lit{Func, SymbolGopError}
+	tokFuncBase64    Token = &Lit{Func, SymbolBase64}
+	tokFuncTime      Token = &Lit{Func, SymbolTime}
+	tokFuncJSONStr   Token = &Lit{Func, SymbolJSONStr}
+	tokFuncJSONBytes Token = &Lit{Func, SymbolJSONBytes}
+	tokFuncPtr       Token = &Lit{Func, SymbolPtr}
+	tokStrMaxDepth   Token = &Lit{String, "max depth exceeded"}
+	tokTNGopRune     Token = &Lit{TypeName, "gop.Rune"}
+	tokTNByte        Token = &Lit{TypeName, "byte"}
+	tokTNBytes       Token = &Lit{TypeName, "[]byte"}
+	tokTNUnsafePtr   Token = &Lit{TypeName, "unsafe.Pointer"}
+	tokTNUintptr     Token = &Lit{TypeName, "uintptr"}
+	tokTNDuration    Token = &Lit{TypeName, SymbolDuration}
+)
+
+// DefaultOptions for Tokenize.
 var DefaultOptions = Options{
 	MaxDepth: 15,
 }
 
 // Tokenize a random Go value with [DefaultOptions].
-func Tokenize(v interface{}) []*Token {
+func Tokenize(v interface{}) []Token {
 	return TokenizeWithOptions(v, DefaultOptions)
 }
 
+// Options controls tokenization.
 type Options struct {
-	// MaxDepth limits the depth of tokenization for nested structures
+	// MaxDepth limits the depth of tokenization for nested structures.
 	// If less than 1 there is no limit.
 	MaxDepth int
 }
 
-func TokenizeWithOptions(v interface{}, opts Options) []*Token {
+// TokenizeWithOptions tokenizes v with the given Options.
+func TokenizeWithOptions(v interface{}, opts Options) []Token {
 	tz := tokenizer{Options: opts, global: map[uintptr]path{}, path: path{}}
 	return tz.tokenize(reflect.ValueOf(v))
 }
 
-func tokenize(v reflect.Value) []*Token {
+func tokenize(v reflect.Value) []Token {
 	tz := tokenizer{global: map[uintptr]path{}, path: path{}}
 	return tz.tokenize(v)
 }
 
 type path []interface{}
 
-func (p path) tokens(opts Options) []*Token {
-	ts := []*Token{}
+func (p path) tokens(opts Options) []Token {
+	ts := []Token{}
 	for i, seg := range p {
 		ts = append(ts, TokenizeWithOptions(seg, opts)...)
 		if i < len(p)-1 {
-			ts = append(ts, &Token{InlineComma, ","})
+			ts = append(ts, tokInlineComma)
 		}
 	}
 	return ts
@@ -148,7 +338,7 @@ func (tz *tokenizer) pop() {
 	tz.path = tz.path[:len(tz.path)-1]
 }
 
-func (tz *tokenizer) circular(v reflect.Value) ([]*Token, func()) {
+func (tz *tokenizer) circular(v reflect.Value) ([]Token, func()) {
 	cleanup := func() {}
 
 	switch v.Kind() {
@@ -159,10 +349,10 @@ func (tz *tokenizer) circular(v reflect.Value) ([]*Token, func()) {
 		}
 
 		if prev, has := tz.global[ptr]; has {
-			ts := []*Token{{Func, SymbolCircular}, {ParenOpen, "("}}
+			ts := []Token{tokFuncCircular, tokParenOpen}
 			ts = append(ts, prev.tokens(tz.Options)...)
-			return append(ts, &Token{ParenClose, ")"}, &Token{Dot, "."},
-				&Token{ParenOpen, "("}, typeName(v.Type().String()), &Token{ParenClose, ")"}), cleanup
+			return append(ts, tokParenClose, tokDot,
+				tokParenOpen, typeName(v.Type().String()), tokParenClose), cleanup
 		}
 
 		tz.global[ptr] = tz.path
@@ -174,9 +364,9 @@ func (tz *tokenizer) circular(v reflect.Value) ([]*Token, func()) {
 	return nil, cleanup
 }
 
-func (tz *tokenizer) tokenize(v reflect.Value) []*Token {
+func (tz *tokenizer) tokenize(v reflect.Value) []Token {
 	if tz.MaxDepth > 0 && len(tz.path) >= tz.MaxDepth {
-		return []*Token{{Func, SymbolGopError}, {ParenOpen, "("}, {String, "max depth exceeded"}, {ParenClose, ")"}}
+		return []Token{tokFuncGopError, tokParenOpen, tokStrMaxDepth, tokParenClose}
 	}
 
 	if ts, has := tz.tokenizeSpecial(v); has {
@@ -192,57 +382,53 @@ func (tz *tokenizer) tokenize(v reflect.Value) []*Token {
 		}
 	}
 
-	t := &Token{Nil, ""}
-
 	switch v.Kind() {
 	case reflect.Interface:
 		return tz.tokenize(v.Elem())
 
 	case reflect.Bool:
-		t.Type = Bool
 		if v.Bool() {
-			t.Literal = "true"
-		} else {
-			t.Literal = "false"
+			return []Token{tokTrue}
 		}
+		return []Token{tokFalse}
 
 	case reflect.String:
 		return tokenizeString(v)
 
 	case reflect.Chan:
 		if v.IsNil() {
-			return []*Token{{ParenOpen, "("},
-				typeName(v.Type().String()), {ParenClose, ")"},
-				{ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+			return []Token{tokParenOpen,
+				typeName(v.Type().String()), tokParenClose,
+				tokParenOpen, tokNil, tokParenClose}
 		}
 
 		if v.Cap() == 0 {
-			return []*Token{{Func, "make"}, {ParenOpen, "("},
-				{Chan, "chan"}, typeName(v.Type().Elem().String()), {ParenClose, ")"},
-				{Comment, wrapComment(formatUintptr(v.Pointer()))}}
+			return []Token{tokFuncMake, tokParenOpen,
+				tokChan, typeName(v.Type().Elem().String()), tokParenClose,
+				CommentPtrTok(v.Pointer())}
 		}
-		return []*Token{{Func, "make"}, {ParenOpen, "("}, {Chan, "chan"},
-			typeName(v.Type().Elem().String()), {InlineComma, ","},
-			{Number, strconv.FormatInt(int64(v.Cap()), 10)}, {ParenClose, ")"},
-			{Comment, wrapComment(formatUintptr(v.Pointer()))}}
+		return []Token{tokFuncMake, tokParenOpen, tokChan,
+			typeName(v.Type().Elem().String()), tokInlineComma,
+			IntTok(v.Cap()), tokParenClose,
+			CommentPtrTok(v.Pointer())}
 
 	case reflect.Func:
 		if v.IsNil() {
-			return []*Token{{ParenOpen, "("},
-				typeName(v.Type().String()), {ParenClose, ")"},
-				{ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+			return []Token{tokParenOpen,
+				typeName(v.Type().String()), tokParenClose,
+				tokParenOpen, tokNil, tokParenClose}
 		}
 
-		return []*Token{{ParenOpen, "("}, {TypeName, v.Type().String()},
-			{ParenClose, ")"}, {ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"},
-			{Comment, wrapComment(formatUintptr(v.Pointer()))}}
+		return []Token{tokParenOpen, &Lit{TypeName, v.Type().String()},
+			tokParenClose, tokParenOpen, tokNil, tokParenClose,
+			CommentPtrTok(v.Pointer())}
 
 	case reflect.Ptr:
 		return tz.tokenizePtr(v)
 
 	case reflect.UnsafePointer:
-		return []*Token{typeName("unsafe.Pointer"), {ParenOpen, "("}, typeName("uintptr"),
-			{ParenOpen, "("}, {Number, formatUintptr(v.Pointer())}, {ParenClose, ")"}, {ParenClose, ")"}}
+		return []Token{tokTNUnsafePtr, tokParenOpen, tokTNUintptr,
+			tokParenOpen, PtrTok(v.Pointer()), tokParenClose, tokParenClose}
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
@@ -250,16 +436,15 @@ func (tz *tokenizer) tokenize(v reflect.Value) []*Token {
 		reflect.Uintptr, reflect.Complex64, reflect.Complex128:
 		return tokenizeNumber(v)
 
-	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
+	default:
+		// Slice, Array, Map, Struct — the remaining kinds reflect can surface here.
 		return tz.tokenizeCollection(v)
 	}
-
-	return []*Token{t}
 }
 
-func (tz *tokenizer) tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
+func (tz *tokenizer) tokenizeSpecial(v reflect.Value) ([]Token, bool) {
 	if v.Kind() == reflect.Invalid {
-		return []*Token{{Nil, "nil"}}, true
+		return []Token{tokNil}, true
 	} else if r, ok := v.Interface().(rune); ok && unicode.IsGraphic(r) {
 		return tokenizeRuneInt32(r), true
 	} else if b, ok := v.Interface().(byte); ok {
@@ -273,45 +458,46 @@ func (tz *tokenizer) tokenizeSpecial(v reflect.Value) ([]*Token, bool) {
 	return tz.tokenizeJSON(v)
 }
 
-func (tz *tokenizer) tokenizeCollection(v reflect.Value) []*Token {
-	ts := []*Token{}
+func (tz *tokenizer) tokenizeCollection(v reflect.Value) []Token {
+	var ts []Token
 
 	switch v.Kind() {
 	case reflect.Slice, reflect.Array:
 		if v.Kind() == reflect.Slice && v.IsNil() {
-			return []*Token{typeName(v.Type().String()), {ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+			return []Token{typeName(v.Type().String()), tokParenOpen, tokNil, tokParenClose}
 		}
 
 		if data, ok := v.Interface().([]byte); ok {
-			ts = append(ts, tokenizeBytes(data)...)
+			ts = tokenizeBytes(data)
 			break
-		} else {
-			ts = append(ts, typeName(v.Type().String()))
 		}
-		ts = append(ts, &Token{SliceOpen, "{"})
+		ts = make([]Token, 0, v.Len()*4+3)
+		ts = append(ts, typeName(v.Type().String()))
+		ts = append(ts, tokSliceOpen)
 		for i := 0; i < v.Len(); i++ {
 			el := v.Index(i)
-			ts = append(ts, &Token{SliceItem, ""})
+			ts = append(ts, tokSliceItem)
 			tz.push(i)
 			ts = append(ts, tz.tokenize(el)...)
 			tz.pop()
-			ts = append(ts, &Token{Comma, ","})
+			ts = append(ts, tokComma)
 		}
-		ts = append(ts, &Token{SliceClose, "}"})
+		ts = append(ts, tokSliceClose)
 
 	case reflect.Map:
 		if v.IsNil() {
-			return []*Token{typeName(v.Type().String()), {ParenOpen, "("}, {Nil, "nil"}, {ParenClose, ")"}}
+			return []Token{typeName(v.Type().String()), tokParenOpen, tokNil, tokParenClose}
 		}
 
+		ts = make([]Token, 0, v.Len()*6+3)
 		ts = append(ts, typeName(v.Type().String()))
 		keys := v.MapKeys()
 		sort.Slice(keys, func(i, j int) bool {
 			return compare(keys[i].Interface(), keys[j].Interface()) < 0
 		})
-		ts = append(ts, &Token{MapOpen, "{"})
+		ts = append(ts, tokMapOpen)
 		for _, k := range keys {
-			ts = append(ts, &Token{MapKey, ""})
+			ts = append(ts, tokMapKey)
 
 			if k.Kind() == reflect.Interface && k.Elem().Kind() == reflect.Ptr {
 				ts = append(ts, tokenizeMapKey(k)...)
@@ -319,185 +505,133 @@ func (tz *tokenizer) tokenizeCollection(v reflect.Value) []*Token {
 				ts = append(ts, tokenize(k)...)
 			}
 
-			ts = append(ts, &Token{Colon, ":"})
+			ts = append(ts, tokColon)
 			tz.push(k.Interface())
 			ts = append(ts, tz.tokenize(v.MapIndex(k))...)
 			tz.pop()
-			ts = append(ts, &Token{Comma, ","})
+			ts = append(ts, tokComma)
 		}
-		ts = append(ts, &Token{MapClose, "}"})
+		ts = append(ts, tokMapClose)
 
 	case reflect.Struct:
 		t := v.Type()
 
+		ts = make([]Token, 0, v.NumField()*6+3)
 		ts = append(ts, typeName(t.String()))
-		ts = append(ts, &Token{StructOpen, "{"})
+		ts = append(ts, tokStructOpen)
 		for i := 0; i < v.NumField(); i++ {
 			name := t.Field(i).Name
-			ts = append(ts, &Token{StructKey, ""})
-			ts = append(ts, &Token{StructField, name})
+			ts = append(ts, tokStructKey)
+			ts = append(ts, &Lit{StructField, name})
 
 			f := v.Field(i)
 			if !f.CanInterface() {
 				f = GetPrivateField(v, i)
 			}
-			ts = append(ts, &Token{Colon, ":"})
+			ts = append(ts, tokColon)
 			tz.push(name)
 			ts = append(ts, tz.tokenize(f)...)
 			tz.pop()
-			ts = append(ts, &Token{Comma, ","})
+			ts = append(ts, tokComma)
 		}
-		ts = append(ts, &Token{StructClose, "}"})
+		ts = append(ts, tokStructClose)
 	}
 
 	return ts
 }
 
-func tokenizeNumber(v reflect.Value) []*Token {
-	t := &Token{Nil, ""}
-	ts := []*Token{}
+var tokStructKey Token = &Lit{StructKey, ""}
+
+func tokenizeNumber(v reflect.Value) []Token {
 	tName := v.Type().String()
 
 	switch v.Kind() {
 	case reflect.Int:
-		t.Type = Number
-		t.Literal = strconv.FormatInt(v.Int(), 10)
 		if tName != "int" {
-			ts = append(ts, typeName(tName), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
-		} else {
-			ts = append(ts, t)
+			return []Token{typeName(tName), tokParenOpen, IntTok(v.Int()), tokParenClose}
 		}
+		return []Token{IntTok(v.Int())}
 
 	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
-		t.Type = Number
-		t.Literal = strconv.FormatInt(v.Int(), 10)
-		ts = append(ts, t, &Token{ParenClose, ")"})
+		return []Token{typeName(tName), tokParenOpen, IntTok(v.Int()), tokParenClose}
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
-		t.Type = Number
-		t.Literal = strconv.FormatUint(v.Uint(), 10)
-		ts = append(ts, t, &Token{ParenClose, ")"})
+		return []Token{typeName(tName), tokParenOpen, UintTok(v.Uint()), tokParenClose}
 
 	case reflect.Float32:
-		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
-		t.Type = Number
-		t.Literal = strconv.FormatFloat(v.Float(), 'f', -1, 32)
-		ts = append(ts, t, &Token{ParenClose, ")"})
+		return []Token{typeName(tName), tokParenOpen, FloatTok{V: v.Float(), Bits: 32}, tokParenClose}
 
 	case reflect.Float64:
-		t.Type = Number
-		t.Literal = strconv.FormatFloat(v.Float(), 'f', -1, 64)
-		if !strings.Contains(t.Literal, ".") {
-			t.Literal += ".0"
-		}
 		if tName != "float64" {
-			ts = append(ts, typeName(tName), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
-		} else {
-			ts = append(ts, t)
+			return []Token{typeName(tName), tokParenOpen, Float64Tok(v.Float()), tokParenClose}
 		}
+		return []Token{Float64Tok(v.Float())}
 
 	case reflect.Complex64:
-		ts = append(ts, typeName(tName), &Token{ParenOpen, "("})
-		t.Type = Number
-		t.Literal = strconv.FormatComplex(v.Complex(), 'f', -1, 64)
-		t.Literal = t.Literal[1 : len(t.Literal)-1]
-		ts = append(ts, t, &Token{ParenClose, ")"})
+		return []Token{typeName(tName), tokParenOpen, ComplexTok{V: v.Complex(), Bits: 64}, tokParenClose}
 
-	case reflect.Complex128:
-		t.Type = Number
-		t.Literal = strconv.FormatComplex(v.Complex(), 'f', -1, 128)
-		t.Literal = t.Literal[1 : len(t.Literal)-1]
+	default:
+		// reflect.Complex128 — callers dispatch only numeric kinds here.
 		if tName != "complex128" {
-			ts = append(ts, typeName(tName), &Token{ParenOpen, "("}, t, &Token{ParenClose, ")"})
-		} else {
-			ts = append(ts, t)
+			return []Token{typeName(tName), tokParenOpen, ComplexTok{V: v.Complex(), Bits: 128}, tokParenClose}
 		}
-
-	}
-
-	return ts
-}
-
-func tokenizeRuneInt32(r rune) []*Token {
-	return []*Token{
-		typeName("gop.Rune"),
-		{ParenOpen, "("},
-		{Number, strconv.FormatInt(int64(r), 10)},
-		{InlineComma, ","},
-		{RuneInt32, strconv.QuoteRune(r)},
-		{ParenClose, ")"},
+		return []Token{ComplexTok{V: v.Complex(), Bits: 128}}
 	}
 }
 
-func tokenizeByte(b byte) []*Token {
-	ts := []*Token{typeName("byte"), {ParenOpen, "("}}
-	r := rune(b)
-	if unicode.IsGraphic(r) {
-		ts = append(ts, &Token{Byte, strconv.QuoteRune(r)})
-	} else {
-		ts = append(ts, &Token{Byte, "0x" + strconv.FormatUint(uint64(b), 16)})
+func tokenizeRuneInt32(r rune) []Token {
+	return []Token{
+		tokTNGopRune,
+		tokParenOpen,
+		IntTok(int64(r)),
+		tokInlineComma,
+		RuneTok(r),
+		tokParenClose,
 	}
-	return append(ts, &Token{ParenClose, ")"})
 }
 
-func tokenizeTime(t time.Time) []*Token {
+func tokenizeByte(b byte) []Token {
+	return []Token{tokTNByte, tokParenOpen, ByteTok(b), tokParenClose}
+}
+
+func tokenizeTime(t time.Time) []Token {
 	ext := GetPrivateFieldByName(reflect.ValueOf(t), "ext").Int()
-	ts := []*Token{{Func, SymbolTime}, {ParenOpen, "("}}
-	ts = append(ts, &Token{String, t.Format(time.RFC3339Nano)})
-	ts = append(ts, &Token{InlineComma, ","}, &Token{Number, strconv.FormatInt(ext, 10)}, &Token{ParenClose, ")"})
-	return ts
+	return []Token{tokFuncTime, tokParenOpen,
+		&Lit{String, t.Format(time.RFC3339Nano)},
+		tokInlineComma, IntTok(ext), tokParenClose}
 }
 
-func tokenizeDuration(d time.Duration) []*Token {
-	ts := []*Token{}
-	ts = append(ts, typeName(SymbolDuration), &Token{ParenOpen, "("})
-	ts = append(ts, &Token{String, d.String()})
-	ts = append(ts, &Token{ParenClose, ")"})
-	return ts
+func tokenizeDuration(d time.Duration) []Token {
+	return []Token{tokTNDuration, tokParenOpen,
+		&Lit{String, d.String()}, tokParenClose}
 }
 
-func tokenizeString(v reflect.Value) []*Token {
-	s := v.String()
-	ts := []*Token{{String, s}}
-	return ts
+func tokenizeString(v reflect.Value) []Token {
+	return []Token{&Lit{String, v.String()}}
 }
 
-func tokenizeBytes(data []byte) []*Token {
-	ts := []*Token{}
-
+func tokenizeBytes(data []byte) []Token {
 	if utf8.Valid(data) {
-		s := string(data)
-		ts = append(ts, typeName("[]byte"), &Token{ParenOpen, "("})
-		ts = append(ts, &Token{String, s})
-		ts = append(ts, &Token{ParenClose, ")"})
-	} else {
-		ts = append(ts, &Token{Func, SymbolBase64}, &Token{ParenOpen, "("})
-		ts = append(ts, &Token{String, base64.StdEncoding.EncodeToString(data)})
-		ts = append(ts, &Token{ParenClose, ")"})
+		return []Token{tokTNBytes, tokParenOpen,
+			&Lit{String, string(data)}, tokParenClose}
 	}
-	return ts
+	return []Token{tokFuncBase64, tokParenOpen,
+		&Lit{String, base64.StdEncoding.EncodeToString(data)}, tokParenClose}
 }
 
-func tokenizeMapKey(v reflect.Value) []*Token {
-	ts := []*Token{}
-	ts = append(ts,
-		&Token{ParenOpen, "("}, typeName(v.Type().String()), &Token{ParenClose, ")"},
-		&Token{ParenOpen, "("}, &Token{Nil, "nil"}, &Token{ParenClose, ")"},
-		&Token{Comment, wrapComment(formatUintptr(v.Elem().Pointer()))},
-	)
-	return ts
+func tokenizeMapKey(v reflect.Value) []Token {
+	return []Token{
+		tokParenOpen, typeName(v.Type().String()), tokParenClose,
+		tokParenOpen, tokNil, tokParenClose,
+		CommentPtrTok(v.Elem().Pointer()),
+	}
 }
 
-func (tz *tokenizer) tokenizePtr(v reflect.Value) []*Token {
-	ts := []*Token{}
-
+func (tz *tokenizer) tokenizePtr(v reflect.Value) []Token {
 	if v.Elem().Kind() == reflect.Invalid {
-		ts = append(ts,
-			&Token{ParenOpen, "("}, typeName(v.Type().String()), &Token{ParenClose, ")"},
-			&Token{ParenOpen, "("}, &Token{Nil, "nil"}, &Token{ParenClose, ")"})
-		return ts
+		return []Token{
+			tokParenOpen, typeName(v.Type().String()), tokParenClose,
+			tokParenOpen, tokNil, tokParenClose}
 	}
 
 	needFn := false
@@ -512,21 +646,20 @@ func (tz *tokenizer) tokenizePtr(v reflect.Value) []*Token {
 	}
 
 	if needFn {
-		ts = append(ts, &Token{Func, SymbolPtr}, &Token{ParenOpen, "("})
+		ts := []Token{tokFuncPtr, tokParenOpen}
 		ts = append(ts, tz.tokenize(v.Elem())...)
-		ts = append(ts, &Token{ParenClose, ")"}, &Token{Dot, "."}, &Token{ParenOpen, "("},
-			typeName(v.Type().String()), &Token{ParenClose, ")"})
-	} else {
-		ts = append(ts, &Token{And, "&"})
-		ts = append(ts, tz.tokenize(v.Elem())...)
+		ts = append(ts, tokParenClose, tokDot, tokParenOpen,
+			typeName(v.Type().String()), tokParenClose)
+		return ts
 	}
-
+	ts := []Token{tokAnd}
+	ts = append(ts, tz.tokenize(v.Elem())...)
 	return ts
 }
 
-func (tz *tokenizer) tokenizeJSON(v reflect.Value) ([]*Token, bool) {
+func (tz *tokenizer) tokenizeJSON(v reflect.Value) ([]Token, bool) {
 	var jv interface{}
-	ts := []*Token{}
+	ts := []Token{}
 	s := ""
 	if v.Kind() == reflect.String {
 		s = v.String()
@@ -534,30 +667,30 @@ func (tz *tokenizer) tokenizeJSON(v reflect.Value) ([]*Token, bool) {
 		if err != nil {
 			return nil, false
 		}
-		ts = append(ts, &Token{Func, SymbolJSONStr})
+		ts = append(ts, tokFuncJSONStr)
 	} else if b, ok := v.Interface().([]byte); ok {
 		err := json.Unmarshal(b, &jv)
 		if err != nil {
 			return nil, false
 		}
 		s = string(b)
-		ts = append(ts, &Token{Func, SymbolJSONBytes})
+		ts = append(ts, tokFuncJSONBytes)
 	}
 
 	_, isObj := jv.(map[string]interface{})
 	_, isArr := jv.([]interface{})
 
 	if isObj || isArr {
-		ts = append(ts, &Token{ParenOpen, "("})
+		ts = append(ts, tokParenOpen)
 		ts = append(ts, TokenizeWithOptions(jv, tz.Options)...)
-		ts = append(ts, &Token{InlineComma, ","},
-			&Token{String, s}, &Token{ParenClose, ")"})
+		ts = append(ts, tokInlineComma,
+			&Lit{String, s}, tokParenClose)
 		return ts, true
 	}
 
 	return nil, false
 }
 
-func typeName(t string) *Token {
-	return &Token{TypeName, t}
+func typeName(t string) Token {
+	return &Lit{TypeName, t}
 }

@@ -513,3 +513,133 @@ func writeFile(t *testing.T, f, code string) {
 		t.Fatal(err)
 	}
 }
+
+// stringTok is a non-Lit Token that reports String type. It exists so
+// tests can exercise the writeReadableString non-Lit branch.
+type stringTok struct{ s string }
+
+func (stringTok) Type() gop.Type                 { return gop.String }
+func (t stringTok) Build(sb *strings.Builder)    { sb.WriteString(t.s) }
+
+func TestStyledToken(t *testing.T) {
+	var sb strings.Builder
+
+	// Nil Inner: Type returns Nil, Build writes nothing.
+	empty := gop.Styled{}
+	eq(t, empty.Type(), gop.Nil)
+	empty.Build(&sb)
+	eq(t, sb.String(), "")
+
+	// Non-nil Inner with no active styles: writes inner verbatim.
+	sb.Reset()
+	plain := gop.Styled{Inner: &gop.Lit{T: gop.String, L: "hi"}}
+	eq(t, plain.Type(), gop.String)
+	plain.Build(&sb)
+	eq(t, sb.String(), "hi")
+
+	// Lit fast path with active style.
+	sb.Reset()
+	litStyled := gop.Styled{
+		Inner:  &gop.Lit{T: gop.String, L: "hi"},
+		Styles: []gop.Style{gop.Red},
+	}
+	litStyled.Build(&sb)
+	eq(t, sb.String(), gop.Red.Set+"hi"+gop.Red.Unset)
+
+	// Non-Lit inner with active style: goes through the temp builder path.
+	sb.Reset()
+	nonLitStyled := gop.Styled{
+		Inner:  stringTok{s: "hi"},
+		Styles: []gop.Style{gop.Red},
+	}
+	nonLitStyled.Build(&sb)
+	eq(t, sb.String(), gop.Red.Set+"hi"+gop.Red.Unset)
+}
+
+func TestRenderNoStyle(t *testing.T) {
+	orig := gop.NoStyle
+	gop.NoStyle = true
+	defer func() { gop.NoStyle = orig }()
+
+	var sb strings.Builder
+	gop.Render(&sb, "hi", []gop.Style{gop.Red})
+	eq(t, sb.String(), "hi")
+}
+
+func TestRenderMultilineSkipsNone(t *testing.T) {
+	var sb strings.Builder
+	// Multi-line path with a None entry that must be skipped without altering output.
+	gop.Render(&sb, "a\nb", []gop.Style{gop.None, gop.Red})
+	eq(t, sb.String(), gop.Red.Set+"a"+gop.Red.Unset+"\n"+gop.Red.Set+"b"+gop.Red.Unset)
+}
+
+func TestWriteIndentDeep(t *testing.T) {
+	// Build a chain of pointers deeper than the indentCache (33 levels)
+	// so Format's indent writer falls through to the per-level loop.
+	type Node struct{ Next *Node }
+	root := &Node{}
+	cur := root
+	for i := 0; i < 40; i++ {
+		cur.Next = &Node{}
+		cur = cur.Next
+	}
+
+	tokens := gop.TokenizeWithOptions(root, gop.Options{MaxDepth: 0})
+	out := gop.Format(tokens, gop.ThemeNone)
+	// The deepest "Next:" field should be indented well beyond 33 levels.
+	deepIndent := strings.Repeat("    ", 40) + "Next:"
+	if !strings.Contains(out, deepIndent) {
+		t.Errorf("expected deep indent past the cache, got:\n%s", out)
+	}
+}
+
+func TestFormatNonLitStringToken(t *testing.T) {
+	// writeReadableString has a non-Lit branch reached only when a
+	// caller passes a Token with Type()==String that isn't a *Lit.
+	tokens := []gop.Token{stringTok{s: "hi"}}
+	eq(t, gop.Format(tokens, gop.ThemeNone), `"hi"`)
+
+	// With an active theme it also exercises the Render path.
+	themed := gop.Format(tokens, func(tp gop.Type) []gop.Style {
+		if tp == gop.String {
+			return []gop.Style{gop.Red}
+		}
+		return []gop.Style{gop.None}
+	})
+	eq(t, themed, gop.Red.Set+`"hi"`+gop.Red.Unset)
+}
+
+func TestTokenizeNumberAllKinds(t *testing.T) {
+	type myInt int
+	type myInt8 int8
+	type myUint uint
+	type myFloat64 float64
+	type myComplex128 complex128
+	type myUintptr uintptr
+
+	cases := []struct {
+		v    interface{}
+		want string
+	}{
+		{int(1), "1"},
+		{myInt(1), "gop_test.myInt(1)"},
+		{int8(1), "int8(1)"},
+		{myInt8(1), "gop_test.myInt8(1)"},
+		{uint(1), "uint(1)"},
+		{myUint(1), "gop_test.myUint(1)"},
+		{uintptr(1), "uintptr(1)"},
+		{myUintptr(1), "gop_test.myUintptr(1)"},
+		{float32(1), "float32(1)"},
+		{float64(1), "1.0"},
+		{myFloat64(1), "gop_test.myFloat64(1.0)"},
+		{complex64(1 + 2i), "complex64(1+2i)"},
+		{complex128(1 + 2i), "1+2i"},
+		{myComplex128(1 + 2i), "gop_test.myComplex128(1+2i)"},
+	}
+	for _, c := range cases {
+		got := gop.Plain(c.v)
+		if got != c.want {
+			t.Errorf("gop.Plain(%v) = %q, want %q", c.v, got, c.want)
+		}
+	}
+}
