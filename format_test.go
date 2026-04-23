@@ -573,6 +573,16 @@ func TestRenderMultilineSkipsNone(t *testing.T) {
 	eq(t, sb.String(), gop.Red.Set+"a"+gop.Red.Unset+"\n"+gop.Red.Set+"b"+gop.Red.Unset)
 }
 
+func TestRenderMultilineCRLF(t *testing.T) {
+	// CRLF input exercises the \r-trim branch in Render and the \r\n
+	// return in firstNewline; a leading newline also exercises the idx==0
+	// segment path.
+	var sb strings.Builder
+	gop.Render(&sb, "\r\na\r\nb", []gop.Style{gop.Red})
+	wrap := func(s string) string { return gop.Red.Set + s + gop.Red.Unset }
+	eq(t, sb.String(), wrap("")+"\r\n"+wrap("a")+"\r\n"+wrap("b"))
+}
+
 func TestWriteIndentDeep(t *testing.T) {
 	// Build a chain of pointers deeper than the indentCache (33 levels)
 	// so Format's indent writer falls through to the per-level loop.

@@ -73,8 +73,6 @@ var (
 	None = Style{}
 )
 
-var regNewline = regexp.MustCompile(`\r?\n`)
-
 // Styled wraps an inner Token and applies the given Styles when built.
 // It is the token form of the legacy Stylize helper.
 type Styled struct {
@@ -120,46 +118,72 @@ func hasActiveStyle(styles []Style) bool {
 	return false
 }
 
-// Render writes the stylized form of str to sb.
-// For single-line input it wraps the content without allocating an
-// intermediate string. Multi-line input falls back to per-style
-// line-wrapping to match the legacy Stylize behavior.
+// Render writes the stylized form of str to sb without allocating
+// intermediate strings: both the single-line and multi-line paths stream
+// directly into sb.
 func Render(sb *strings.Builder, str string, styles []Style) {
-	if NoStyle {
+	if NoStyle || !hasActiveStyle(styles) {
 		sb.WriteString(str)
 		return
 	}
 	if !strings.ContainsAny(str, "\r\n") {
-		// Single-line: emit outer-to-inner Set, content, then inner-to-outer Unset.
-		for i := len(styles) - 1; i >= 0; i-- {
-			if styles[i] != None {
-				sb.WriteString(styles[i].Set)
-			}
-		}
+		writeStyleSets(sb, styles)
 		sb.WriteString(str)
-		for _, s := range styles {
-			if s != None {
-				sb.WriteString(s.Unset)
-			}
-		}
+		writeStyleUnsets(sb, styles)
 		return
 	}
-	for _, s := range styles {
-		if s == None {
-			continue
+
+	newline := firstNewline(str)
+	remaining := str
+	first := true
+	for {
+		idx := strings.IndexByte(remaining, '\n')
+		if idx < 0 {
+			if !first {
+				sb.WriteString(newline)
+			}
+			writeStyleSets(sb, styles)
+			sb.WriteString(remaining)
+			writeStyleUnsets(sb, styles)
+			return
 		}
-		str = stylizeLines(s, str)
+		end := idx
+		if idx > 0 && remaining[idx-1] == '\r' {
+			end = idx - 1
+		}
+		if !first {
+			sb.WriteString(newline)
+		}
+		first = false
+		writeStyleSets(sb, styles)
+		sb.WriteString(remaining[:end])
+		writeStyleUnsets(sb, styles)
+		remaining = remaining[idx+1:]
 	}
-	sb.WriteString(str)
 }
 
-func stylizeLines(s Style, str string) string {
-	newline := regNewline.FindString(str)
-	lines := regNewline.Split(str, -1)
-	for i, l := range lines {
-		lines[i] = s.Set + l + s.Unset
+func writeStyleSets(sb *strings.Builder, styles []Style) {
+	for i := len(styles) - 1; i >= 0; i-- {
+		if styles[i] != None {
+			sb.WriteString(styles[i].Set)
+		}
 	}
-	return strings.Join(lines, newline)
+}
+
+func writeStyleUnsets(sb *strings.Builder, styles []Style) {
+	for _, s := range styles {
+		if s != None {
+			sb.WriteString(s.Unset)
+		}
+	}
+}
+
+func firstNewline(s string) string {
+	idx := strings.IndexByte(s, '\n')
+	if idx > 0 && s[idx-1] == '\r' {
+		return "\r\n"
+	}
+	return "\n"
 }
 
 // S is the shortcut for Stylize.
